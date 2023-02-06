@@ -5,14 +5,16 @@
 #include <Adafruit_MCP4725.h>
 #include <EwmaT.h>
 
+const byte debug = 1;
 
 //digital signal pin
 const byte digitalPin = 0;
-volatile unsigned int period_us = 0;
-volatile unsigned int previous_micros = 0;
+int period_us = 0;
+int period_us_ewma = 0;
+volatile unsigned int current_micros = 0;
+unsigned int previous_micros = 0;
 volatile boolean data_available = false;
-EwmaT <unsigned int> ewma(1,13); //create a filter with equivalent alpha of 0.38 (1/26) on fait la moyenne sur une tour de roue dentée.
-volatile unsigned int counter = 0;
+EwmaT <unsigned int> ewma(1,20); //create a filter with equivalent alpha of 0.38 (1/26) on fait la moyenne sur une tour de roue dentée.
 
 //LED builtin state
 volatile boolean state;
@@ -34,7 +36,7 @@ Adafruit_MCP4725 dac;
 
 void setup() {
   //start serial com
-  Serial.begin(9600);
+  if (debug) Serial.begin(9600);
   /*while(Serial.available() == 0) { 
     Serial.println("wait for input");
   }*/
@@ -55,36 +57,53 @@ void setup() {
   dac.setVoltage(0,false);
   
 }
-
+byte count_error = 0;
+byte outliner = 0;
 void loop() {
   //change led state if data are available
   if(data_available) {
+    //compute period
+    period_us = current_micros - previous_micros;
+    //update timer
+    previous_micros = current_micros;
     //write current LED state
+    state = !state;
     digitalWrite(LED_BUILTIN,state);
-    ////Compute Exponentially Weighted Moving Average
-    unsigned int period_us_ewma = ewma.filter(period_us);
-    //unsigned int period_us_ewma = period_us;
+    //compare period_us with last_period_us_ewma
+    //float error = abs(period_us-period_us_temp)/period_us; 
+    /*if(error > 0.2) {
+      Serial.println("outliner detected");
+      Serial.println(String(error));
+      Serial.println(String(period_us));
+      Serial.println(String(period_us_temp));
+      //if period_us is 30% lower than last_period_us_ewma, outliner
+      ////Compute Exponentially Weighted Moving Average
+      count_error++;    }
+    else {
+      count_error = 0;
+    }*/
+    //Compute Exponentially Weighted Moving Average
+    period_us_ewma = ewma.filter(period_us);
     //write period value to DAC
     int val = round(((1e6 / period_us_ewma) * 4095 ) / max_frequency_Hz);
     if (!dac.setVoltage(val,false)) Serial.println("dac write value failed");
-    //else Serial.println("period us :"+String(period_us)+" 12bits value : "+String(val)+" counter : "+String(counter));
+    
+    if (debug) {
+      //print period_us for teleplot
+      Serial.println(">period_us:"+String(period_us));
+      //print period_us_ewma for debug
+      Serial.println(">period_us_ewma:"+String(period_us_ewma));
+      //print val for debug
+      Serial.println(">val:"+String(val));
+    }
     data_available = false;
   }
 }
 
 //ISR function call by interupt
 void on_interupt() {
-  //update teeth counter 
-  counter +=1 ;
-  //if((counter % 1 )== 0) {
-    //read time and compute period
-    unsigned int current_micros = micros();
-    period_us = current_micros - previous_micros;
-    //update timer
-    previous_micros = current_micros;
-    //update data tag
-    data_available = true;
-    //swith on LED
-    state = !state;
-  //}
+  //read time and compute period
+  current_micros = micros();
+  //update data tag
+  data_available = true;
 }
